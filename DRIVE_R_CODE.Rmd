@@ -1,0 +1,456 @@
+---
+title: "DRIVE Study Analysis Code"
+author: "Jianzheng Wu"
+date: "2023-11-21"
+output:
+  html_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,warning = FALSE, message=FALSE)
+```
+
+
+#### Posterior function  \
+Functions to generate the estimated posterior distribution of the parameter of interest (here is the expected driving time)
+```{r posterior distribution function, include=FALSE}
+post_dist <-function(plaza=plaza_s1,rainbow=rainbow_s1,stateline=stateline_s1,
+                     mu0=15,nu0=0.1, sigma0=5,tau0=5, burn=10000, iter=1000000){
+  plaza_matrix <- matrix(c(rep(1,length(plaza)),plaza),ncol = 2)
+  rainbow_matrix <- matrix(c(rep(2,length(rainbow)),rainbow),ncol = 2)
+  stateline_matrix <- matrix(c(rep(3,length(stateline)),stateline),ncol = 2)
+  
+  Y<-rbind(plaza_matrix,rainbow_matrix,stateline_matrix)
+  
+  ### starting value
+  m <- length(unique(Y[, 1]))
+  n <-sv<-ybar<-rep (NA,m)
+  for (j in 1:m){
+    ybar[j]<- mean(Y[Y[,1]==j,2])
+    sv[j]<-var(Y[Y[,1]==j,2])
+    n[j]<-sum(Y[,1]==j)
+  }
+  
+  theta <- ybar
+  sigma2 <- mean(sv)
+  mu <- mean(theta)
+  tau2 <- var(theta) 
+  
+  ##set up MCMC
+  #burn<-1000
+  #iter<-2500
+  S<-burn+iter
+  THETA<-matrix(nrow=S, ncol=m)
+  SIGMA2<- matrix(nrow=S,ncol=1)
+  
+  ###MCMC algorithm
+  for (s in 1:S){
+    #sample new values of the thetas
+    for (j in 1:m){
+      #Generate a new theta value from its full conditional use the starting pooled sigma2
+      sigma2_temp<-sigma2
+      mu_n<-((mu0/tau0^2+n[j]*ybar[j]/sigma2_temp)/(1/tau0^2+n[j]/sigma2_temp))
+      tau2_n<-(1/tau0^2+n[j]/sigma2_temp)^(-1)
+      theta[j]<-rnorm(1,mu_n,sqrt(tau2_n))
+    }
+    #sample new value of sigma2
+    nun<- nu0+sum(n)
+    ss<-nu0*sigma0^2
+    for (j in 1:m){ 
+      ss <- ss+sum((Y[Y[,1]==j,2]-theta[j])^2)
+    }
+    sigma2<- 1/rgamma(1,nun/2,ss/2)
+    
+    #save results
+    THETA[s,]<-theta
+    SIGMA2[s,]<-sigma2
+  }
+  
+  df_post_mean<-data.frame(plaza=THETA[(burn+1):S,1],
+                           rainbow=THETA[(burn+1):S,2],
+                           stateline=THETA[(burn+1):S,3])
+  post_SIGMA2<-SIGMA2[(burn+1):S,1]
+  return(list(post_draw_theta=df_post_mean,post_draw_sigma2=post_SIGMA2))
+} 
+```
+
+### Interim Analysis function  \
+Function to perform the interim analysis 
+```{r interim analysis function}
+interim_analysis<- function(interim=NA,plaza=plaza_s1,
+         rainbow=rainbow_s1,
+         stateline=stateline_s1){
+
+post_draws_Thetas<-post_dist(plaza=plaza,rainbow=rainbow,stateline=stateline)
+
+plaza_inttemp<-post_draws_Thetas$post_draw_theta$plaza
+rainbow_inttemp<-post_draws_Thetas$post_draw_theta$rainbow
+stateline_inttemp<-post_draws_Thetas$post_draw_theta$stateline
+variance_inttemp<-post_draws_Thetas$post_draw_sigma2
+
+df_post_all<-data.frame(
+  post_dist_plaza=plaza_inttemp,
+  post_dist_rainbow=rainbow_inttemp,
+  post_dist_stateline=stateline_inttemp,
+  post_dist_sigma2=post_draws_Thetas$post_draw_sigma2,
+  interim=rep(interim,length(plaza_inttemp))
+)
+
+
+###get the quantiles for the estimates
+df_thetas <- data.frame(Parameter=c("theta0","theta1","theta2","sigma","theta1-theta0","theta2-theta0"),
+                        Description=c("Mean time for Plaza (Control)",
+                                      "Mean time for Rainbow",
+                                      "Mean time for State Line",
+                                      "Standard deviation for drive time",
+                                      "Mean difference between Rainbow and Control",
+                                      "Mean difference between State Line and Control"),
+                        Estimate=c(mean(plaza_inttemp),
+                                   mean(rainbow_inttemp),
+                                   mean(stateline_inttemp),
+                                   sqrt(mean(variance_inttemp)),
+                                   mean(rainbow_inttemp-plaza_inttemp),
+                                   mean(stateline_inttemp-plaza_inttemp)),
+                        quant0.025=c(quantile(plaza_inttemp,0.025),
+                                     quantile(rainbow_inttemp,0.025),
+                                     quantile(stateline_inttemp,0.025),
+                                     sqrt(quantile(variance_inttemp,0.025)),
+                                     quantile(rainbow_inttemp-plaza_inttemp,0.025),
+                                     quantile(stateline_inttemp-plaza_inttemp,0.025)),
+                        quant0.975=c(quantile(plaza_inttemp,0.975),
+                                     quantile(rainbow_inttemp,0.975),
+                                     quantile(stateline_inttemp,0.975),
+                                     sqrt(quantile(variance_inttemp,0.975)),
+                                     quantile(rainbow_inttemp-plaza_inttemp,0.975),
+                                     quantile(stateline_inttemp-plaza_inttemp,0.975))
+                        ) 
+
+df_quantile<-data.frame(
+  quantile=c("2.5%","25%","50%","75%","97.5%"),
+      plaza=quantile(plaza_inttemp,c(0.025,0.25,0.50,0.75,0.975)),
+      rainbow=quantile(rainbow_inttemp,c(0.025,0.25,0.50,0.75,0.975)),
+      stateline=quantile(stateline_inttemp,c(0.025,0.25,0.50,0.75,0.975)),
+      variance=quantile(post_draws_Thetas$post_draw_sigma2,c(0.025,0.25,0.50,0.75,0.975)),
+      interim=rep(interim,5)
+  )
+
+#The quantity of interest: find the route that produce the greatest Pr(Max) probability being Max.Here is the less!!
+ProbMax_rainbow<-mean(rainbow_inttemp-plaza_inttemp<stateline_inttemp-plaza_inttemp)
+ProbMax_stateline<-mean(stateline_inttemp-plaza_inttemp<rainbow_inttemp-plaza_inttemp)
+
+if(ProbMax_rainbow>ProbMax_stateline){
+  theta_dmax<-rainbow_inttemp
+}else{theta_dmax<-stateline_inttemp}
+
+
+###Determine the futility and success
+#interim_i=1
+Decision<-"Inconclusive"
+Futility_criteria<-max(mean(rainbow_inttemp-plaza_inttemp< -1),mean(stateline_inttemp-plaza_inttemp< -1))
+Success_criteria<-mean(theta_dmax < plaza_inttemp)
+
+##generate table for the quantity of interest
+df_QOI <- data.frame(Parameter=c("P(theta_d < theta0)",
+                                 "Max P(thetad-theta0 < -1"),
+                     Description=c("Probability of being better than control for the best route",
+                                   "Maximum probability of being better than control by one minute"),
+                     Estimate=c(mean(theta_dmax < plaza_inttemp),
+                                max(mean(rainbow_inttemp-plaza_inttemp< -1),mean(stateline_inttemp-plaza_inttemp< -1)))
+                     )
+
+##Decision Rules
+
+if (Futility_criteria<0.1){
+  Decision<-"Futility"
+  Decision_Futility <- "Yes"
+}else if (Success_criteria>0.998){
+  Decision<-"Success"
+  Decision_Success<- "Yes"
+}else {
+  Decision<-"Inconclusive"
+  Decision_Futility <- "No"
+  Decision_Success<- "No"
+}
+
+df_Decision <- data.frame(Parameter=c("Pr(theta_d < theta0>0.998",
+                                      "Max Pr(theta_d-theta0 < -1) < 0.1"),
+                          Description=c("Success Criteria",
+                                        "Futility Criteria"),
+                          Estimate=c(Decision_Success,Decision_Futility))
+
+df_sum <- data.frame (
+  Decision=Decision,
+  Futility_criteria=Futility_criteria,
+  Success_criteria=Success_criteria,
+  Allocation_rainbow=ProbMax_rainbow,
+  Allocation_stateline=ProbMax_stateline,
+  plaza_mean=mean(plaza_inttemp),
+  rainbow_mean=mean(rainbow_inttemp),
+  stateline_mean=mean(stateline_inttemp),
+  variance=mean(post_draws_Thetas$post_draw_sigma2),
+  plaza_n=length(plaza),
+  rainbow_n=length(rainbow),
+  stateline_n=length(stateline),
+  interim=interim
+)
+
+
+return(list(Quantile=df_quantile,
+            Sum_report=df_sum,
+            post_dist_draw=df_post_all,
+            df_thetas=df_thetas,
+            df_QOI=df_QOI,
+            df_Decision=df_Decision
+            ))
+}
+```
+
+
+### RAR Allocation function  \
+Functions to calculate the probability Pr(Max) for each route that is used for response adaptive randomization or allocation.
+```{r Allocation function}
+allocation<- 
+  function(interim_result=interim_1st,
+           new_ObsNum=8,
+           block_size=4,
+           fixed_allocation=1){
+
+pal_rainbow<-interim_result$Sum_report$Allocation_rainbow[[1]]
+pal_stateline<-interim_result$Sum_report$Allocation_stateline[[1]]
+
+#To avoid assigning drives to a route with a minimal chance of being the best route, any probability less than 0.05 is set to zero at that interim and the resulting probability is reallocated among the remaining routes. In this manner, a route may be temporarily dropped but may be re-introduced if the adaptive randomization probability increases at subsequent interims.
+pal_rainbow<-ifelse(pal_rainbow<0.05,0,pal_rainbow) #if the probability is less than 0.05 then drop the arm
+pal_stateline<-ifelse(pal_stateline<0.05,0,pal_stateline)
+
+#get the allocation for these 8 participants. If the number of observations is a multiple of its integer factors/block size, then we can allocate 1 to the control and draw three in each block according to the probability of these two routes. If we have extra observations then we need to draw 1 by 1 such as the 33rd observations after the third interim. For example for the 33rd object after the third interim, we need to treat them differently,draw based on the probabilities of all three.
+
+#Initialize a vector to store the allocation probability for all three routes when there are extra observations.
+pal_plaza_extra<-NA
+pal_rainbow_extra<-NA
+pal_stateline_extra <-NA
+Subjects <- 1:block_size
+if (new_ObsNum%%block_size==0){ #if we have exact number of blocks
+block_n=new_ObsNum/block_size
+ #the allocation to control is fixed, allocate 1 subject to control for every 4 subjects.
+allo_plaza=0
+allo_rainbow=0
+allo_stateline=0
+
+Allo_order<-data.frame(Subject=vector(),
+                       Route=vector(),
+                       Block_Num=vector())
+for (i in 1:block_n) {
+allocation<- sample(x=c("rainbow","stateline"),
+       size=block_size-fixed_allocation,
+       replace=T,
+       prob = c(pal_rainbow,pal_stateline)
+       )
+allo_plaza <-fixed_allocation + allo_plaza
+allo_rainbow <- length(allocation[allocation=="rainbow"]) + allo_rainbow
+allo_stateline <- length(allocation[allocation=="stateline"]) + allo_stateline
+
+temp_df<-data.frame(Subject=sample(Subjects),
+           Route=c("plaza",allocation),
+           Block_Num=i)
+temp_df<-temp_df[order(temp_df$Subject, decreasing = FALSE),]#reorder the data
+Allo_order <- rbind(Allo_order,temp_df)
+
+
+}
+
+
+} else {
+  block_n=new_ObsNum%/%block_size #the integer division/factor for the number of blocks. so that we can draw 3 at a time     
+  extra_n=new_ObsNum%%block_size #the remainder that we need to draw 1 by 1
+  allo_plaza=0
+  allo_rainbow=0
+  allo_stateline=0
+  
+  Allo_order<-data.frame(Subject=vector(),
+                       Route=vector(),
+                       Block_Num=vector())
+  
+        for (i in 1:block_n){ 
+        allocation<- sample(x=c("rainbow","stateline"),
+                           size=block_size-fixed_allocation,
+                           replace=T,
+                           prob = c(pal_rainbow,pal_stateline)
+                          )
+        allo_plaza <-fixed_allocation + allo_plaza
+        allo_rainbow <- length(allocation[allocation=="rainbow"]) + allo_rainbow
+        allo_stateline <- length(allocation[allocation=="stateline"]) + allo_stateline  
+        
+        temp_df<-data.frame(Subject=sample(Subjects),
+           Route=c("plaza",allocation),
+           Block_Num=i)
+       temp_df<-temp_df[order(temp_df$Subject, decreasing = FALSE),]
+        Allo_order <- rbind(Allo_order,temp_df)
+        }
+    #for each extra observations, we need to recalculate the probability  
+    pal_plaza_extra=1/block_size 
+    pal_rainbow_extra=(1-pal_plaza_extra)*pal_rainbow
+    pal_stateline_extra=(1-pal_plaza_extra)*pal_stateline    
+    allo_extra<-sample(x=c("plaza","rainbow","stateline"),
+                         size=extra_n,
+                         replace=T,
+                         prob=c(pal_plaza_extra,pal_rainbow_extra,pal_stateline_extra)
+                         )
+      allo_plaza <- length(allo_extra[allo_extra=="plaza"]) + allo_plaza
+      allo_rainbow <- length(allo_extra[allo_extra=="rainbow"]) + allo_rainbow
+      allo_stateline <- length(allo_extra[allo_extra=="stateline"]) + allo_stateline 
+      
+      extra_subjects<-1:extra_n
+      
+      allo_extra_temp <- data.frame(Subject=sample(extra_subjects),
+           Route=allo_extra,
+           Block_Num=i+0.5)
+      allo_extra_temp<-allo_extra_temp[order(allo_extra_temp$Subject, decreasing = FALSE),]
+      Allo_order <- rbind(allo_extra_temp,Allo_order)
+}
+
+
+  df_allocation<-data.frame(routes=c("plaza","rainbow","stateline"),
+                          Allocation_Num=c(allo_plaza,allo_rainbow,allo_stateline),
+                          Allocation_Prob=c(NA,pal_rainbow,pal_stateline),
+                          Allocation_extra_Prob=c(pal_plaza_extra,pal_rainbow_extra,pal_stateline_extra)
+                          )
+  return (list(df_allocation=df_allocation,Allocation_order=Allo_order))
+}
+
+```
+
+
+### First Interim Analysis  \
+```{r First Interim Analysis}
+#The functions above should be run before executing the following codes
+##Input the collected data
+#library(flextable)  
+library(rmarkdown)
+library(readr)
+
+Main_Data <- read_csv("S:/Biostats/BIO-STAT/BISR/FACTS Working Group/FACTS code/Case Study 22 DRIVE/6.Main Analysis/Analysis_JZ/First_Interim/Raw_data/DRIVETrial_Initial_Phase.csv")
+
+####Replace with the real data collected 
+blinded_route<-unique(Main_Data$route_randomized_blinded)
+
+plaza_s1<-Main_Data$time_diff[Main_Data$route_true_blinded==blinded_route[1]] 
+rainbow_s1<-Main_Data$time_diff[Main_Data$route_true_blinded==blinded_route[2]]
+stateline_s1<-Main_Data$time_diff[Main_Data$route_true_blinded==blinded_route[3]]
+
+set.seed(1234)  
+###First interim
+  interim_1st<-interim_analysis(interim = 1,
+                                plaza=plaza_s1,
+                                rainbow=rainbow_s1,
+                                stateline=stateline_s1
+                                )
+
+  #flextable(interim_1st$Quantile)
+  #paged_table(interim_1st$Sum_report)
+
+paged_table(interim_1st$df_thetas)
+paged_table(interim_1st$df_QOI)
+paged_table(interim_1st$df_Decision)
+  
+
+####RAR
+  Allocation_2<-allocation(interim_result=interim_1st,
+           new_ObsNum=8,
+           block_size=4,
+           fixed_allocation=1)
+ paged_table(Allocation_2$df_allocation)
+ paged_table(Allocation_2$Allocation_order)
+ 
+### Get the randomization list
+ Randomization_list <- rep(NA,nrow(Allocation_2$Allocation_order))
+ 
+ for (i in 1:nrow(Allocation_2$Allocation_order)){
+   if (Allocation_2$Allocation_order$Route[i]=="plaza"){
+   Randomization_list[i]= blinded_route[1]
+   } else if (Allocation_2$Allocation_order$Route[i]=="rainbow"){
+   Randomization_list[i]= blinded_route[2] 
+   } else if (Allocation_2$Allocation_order$Route[i]=="stateline") {
+   Randomization_list[i]= blinded_route[3]  
+   }
+ }
+
+#folder="S:/Biostats/BIO-STAT/BISR/FACTS Working Group/FACTS code/Case Study 22 DRIVE/6.Main Analysis/Analysis_JZ/First_Interim/R_analysis"
+#write.csv(Randomization_list,paste(folder,"Randomization_list1.csv",sep="/"),row.names = FALSE)
+
+
+```
+
+### Second Interim Analysis  \
+```{r Second Interim Analysis}
+#The functions above should be run before executing the following codes
+##Input the collected data
+  plaza_s2<-c(12.5, 10.5, 11.7, 12.0, 10.4, 10.9)
+  rainbow_s2<-c(11.4, 12.3, 10.1, 13.7, 13.2, 10.9, 11.3, 13.0)
+  stateline_s2<-c(13.9, 14.0)
+  
+###First interim
+  interim_2nd<-interim_analysis(interim = 2,
+                                plaza=plaza_s2,
+                                rainbow=rainbow_s2,
+                                stateline=stateline_s2
+                                )
+
+  flextable(interim_2nd$Quantile)
+  paged_table(interim_2nd$Sum_report)
+
+####RAR
+  Allocation_3<-allocation(interim_result=interim_2nd,
+           new_ObsNum=8,
+           block_size=4,
+           fixed_allocation=1)
+ flextable(Allocation_3)
+ 
+```
+
+### Third Interim Analysis  \
+```{r Third Interim Analysis,eval = FALSE}
+#The functions above should be run before executing the following codes
+##Input the collected data
+  plaza_s3<-c()
+  rainbow_s3<-c()
+  stateline_s3<-c()
+  
+###First interim
+  interim_3rd<-interim_analysis(interim = 3,
+                                plaza=plaza_s3,
+                                rainbow=rainbow_s3,
+                                stateline=stateline_s3
+                                )
+
+  flextable(interim_3rdt$Quantile)
+  paged_table(interim_3rd$Sum_report)
+
+####RAR
+  Allocation_4<-allocation(interim_result=interim_3rd,
+           new_ObsNum=8,
+           block_size=4,
+           fixed_allocation=1)
+ flextable(Allocation_4)
+ 
+```
+
+### Final  Analysis  \
+```{r Final Interim Analysis, eval = FALSE}
+#The functions above should be run before executing the following codes
+##Input the collected data
+  plaza_s4<-c()
+  rainbow_s4<-c()
+  stateline_s4<-c()
+  
+###Final interim
+  interim_4th<-interim_analysis(interim = 4,
+                                plaza=plaza_s4,
+                                rainbow=rainbow_s4,
+                                stateline=stateline_s4
+                                )
+
+  flextable(interim_4th$Quantile)
+  paged_table(interim_4th$Sum_report)
+
+```
