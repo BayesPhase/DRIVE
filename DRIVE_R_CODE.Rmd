@@ -331,7 +331,7 @@ library(rmarkdown)
 library(readr)
 
 
-Main_Data <- read_csv("S:/Biostats/BIO-STAT/BISR/FACTS Working Group/FACTS code/Case Study 22 DRIVE/6.Main Analysis/Analysis_JZ/First_Interim/Raw_data/DRIVETrial_Initial_Phase.csv")
+Main_Data <- read_csv("S:/Biostats/BIO-STAT/BISR/FACTS Working Group/FACTS code/Case Study 22 DRIVE/6.Main Analysis/Blinded Data/Data//DRIVETrial_Initial_Phase.csv")
 
 ####Replace with the real data collected 
 blinded_route<-unique(Main_Data$route_randomized_blinded)
@@ -376,9 +376,6 @@ paged_table(interim_1st$df_Decision)
    Randomization_list[i]= blinded_route[3]  
    }
  }
-
-#folder="S:/Biostats/BIO-STAT/BISR/FACTS Working Group/FACTS code/Case Study 22 DRIVE/6.Main Analysis/Analysis_JZ/First_Interim/R_analysis"
-#write.csv(Randomization_list,paste(folder,"Randomization_list1.csv",sep="/"),row.names = FALSE)
 
 
 ```
