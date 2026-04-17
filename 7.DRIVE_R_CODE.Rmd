@@ -9,8 +9,9 @@ output:
 knitr::opts_chunk$set(echo = FALSE,warning = FALSE, message=FALSE)
 ```
 
+This R code is for the DRIVE Trial Analysis. All the reports and simulations were run using R version 4.3.0 and FACTS (Berry Consultants, LLC, Austin, TX) version 7.0.0. The team replicated the FACTS simulations in R so that readers could replicate them. 
 
-#### Posterior function  \
+### Posterior function  \
 Functions to generate the estimated posterior distribution of the parameter of interest (here is the expected driving time)
 ```{r posterior distribution function, include=FALSE}
 post_dist <-function(plaza=plaza_s1,rainbow=rainbow_s1,stateline=stateline_s1,
@@ -72,7 +73,135 @@ post_dist <-function(plaza=plaza_s1,rainbow=rainbow_s1,stateline=stateline_s1,
   return(list(post_draw_theta=df_post_mean,post_draw_sigma2=post_SIGMA2))
 } 
 ```
+### Fixed Design \
+The original trial used the adaptive design (see after fixed design code). However, anyone interested to do a fixed design, can follow the sample fixed design code below
+```{r}
+```
+### Final Analysis Function for Fixed Design \
+Function to perform the final analysis for fixed design
+```{r Final Analysis function}
+#The function above (Posterior function) should be run before executing the following codes
+final_analysis_fixed <- function(plaza, rainbow, stateline){
+  
+  post <- post_dist(plaza, rainbow, stateline)
+  
+  plaza_post <- post$post_draw_theta$plaza
+  rainbow_post <- post$post_draw_theta$rainbow
+  stateline_post <- post$post_draw_theta$stateline
+  sigma2_post <- post$post_draw_sigma2
+  
+  ##########################################################
+  ### Posterior summaries
+  ##########################################################
+  df_summary <- data.frame(
+    Parameter = c("theta0","theta1","theta2","sigma",
+                  "theta1-theta0","theta2-theta0"),
+    
+    Description = c("Mean time for Plaza (Control)",
+                    "Mean time for Rainbow",
+                    "Mean time for State Line",
+                    "Standard deviation for drive time",
+                    "Mean difference between Rainbow and Control",
+                    "Mean difference between State Line and Control"),
+    
+    Estimate = c(mean(plaza_post),
+             mean(rainbow_post),
+             mean(stateline_post),
+             sqrt(mean(sigma2_post)),
+             mean(rainbow_post - plaza_post),
+             mean(stateline_post - plaza_post)),
+    
+    quant0.025 = c(quantile(plaza_post,0.025),
+            quantile(rainbow_post,0.025),
+            quantile(stateline_post,0.025),
+            sqrt(quantile(sigma2_post,0.025)),
+            quantile(rainbow_post - plaza_post,0.025),
+            quantile(stateline_post - plaza_post,0.025)),
+    
+    quant0.975 = c(quantile(plaza_post,0.975),
+            quantile(rainbow_post,0.975),
+            quantile(stateline_post,0.975),
+            sqrt(quantile(sigma2_post,0.975)),
+            quantile(rainbow_post - plaza_post,0.975),
+            quantile(stateline_post - plaza_post,0.975))
+  )
+  
+  ##########################################################
+  ### Probability of being best
+  ##########################################################
+  prob_rainbow_best <- mean(rainbow_post < pmin(plaza_post, stateline_post))
+  prob_stateline_best <- mean(stateline_post < pmin(plaza_post, rainbow_post))
+  
+  df_prob <- data.frame(
+    Route = c("Rainbow","Stateline"),
+    Pr_Best = c(prob_rainbow_best, prob_stateline_best)
+  )
+  
+  ##########################################################
+  ### final decision rule
+  ##########################################################
+  success_rainbow <- mean(rainbow_post < plaza_post) > 0.9812
+  success_stateline <- mean(stateline_post < plaza_post) > 0.9812
+  
+  decision <- "Inconclusive / No clear winner"
+  if(success_rainbow){
+    decision <- "Rainbow better than control"
+  } else if(success_stateline){
+    decision <- "Stateline better than control"
+  }
+  
+  df_decision <- data.frame(
+    Decision = decision,
+    Pr_rainbow_better = mean(rainbow_post < plaza_post),
+    Pr_stateline_better = mean(stateline_post < plaza_post)
+  )
+  
+  ##########################################################
+  return(list(
+    Summary = df_summary,
+    ProbBest = df_prob,
+    Decision = df_decision
+  ))
+}
 
+```
+
+### Final Analysis for Fixed Design \
+```{r Final Analysis for fixed design}
+#The functions above (Posterior function, One Final Analysis Function for Fixed Design ) should be run before executing the following codes
+############################################################
+### LOAD DATA
+############################################################
+library(rmarkdown)
+library(readr)
+
+Main_Data <- read_csv("S:/Biostats/BIO-STAT/BISR/FACTS Working Group/FACTS code/Case Study 22 DRIVE/2.Initial Designs/Fixed_Design_JZ/Fixed_Design_deterministic_results/Det Accrual 1_Drop1_Expected/patients00001.csv", skip = 1)
+
+plaza <- Main_Data$`Visit 1`[Main_Data$Dose == 1]
+rainbow <- Main_Data$`Visit 1`[Main_Data$Dose == 3]
+stateline <- Main_Data$`Visit 1`[Main_Data$Dose == 2]
+
+############################################################
+### Final analysis at total sample size
+############################################################
+set.seed(1234)
+
+final_result <- final_analysis_fixed(
+  plaza = plaza,
+  rainbow = rainbow,
+  stateline = stateline
+)
+
+############################################################
+### OUTPUT
+############################################################
+paged_table(final_result$Summary)
+paged_table(final_result$ProbBest)
+paged_table(final_result$Decision)
+
+```
+
+### Adaptive Design \
 ### Interim Analysis function  \
 Function to perform the interim analysis 
 ```{r interim analysis function}
@@ -133,7 +262,7 @@ df_quantile<-data.frame(
       interim=rep(interim,5)
   )
 
-#The quantity of interest: find the route that produce the greatest Pr(Max) probability being Max.Here is the less!!
+#The quantity of interest: find the route that produce the greatest Pr(Max) probability being Max. Here is the less!!
 ProbMax_rainbow<-mean(rainbow_inttemp-plaza_inttemp<stateline_inttemp-plaza_inttemp)
 ProbMax_stateline<-mean(stateline_inttemp-plaza_inttemp<rainbow_inttemp-plaza_inttemp)
 
@@ -152,7 +281,7 @@ Success_criteria<-mean(theta_dmax < plaza_inttemp)
 
 ##generate table for the quantity of interest
 df_QOI <- data.frame(Parameter=c("P(theta_d < theta0)",
-                                 "Max P(thetad-theta0 < -1"),
+                                 "Max P(theta_d-theta0) < -1"),
                      Description=c("Probability of being better than control for the best route",
                                    "Maximum probability of being better than control by one minute"),
                      Estimate=c(mean(theta_dmax < plaza_inttemp),
@@ -173,7 +302,7 @@ if (Futility_criteria<0.1){
   Decision_Success<- "No"
 }
 
-df_Decision <- data.frame(Parameter=c("Pr(theta_d < theta0>0.998",
+df_Decision <- data.frame(Parameter=c("Pr(theta_d < theta0) > 0.998",
                                       "Max Pr(theta_d-theta0 < -1) < 0.1"),
                           Description=c("Success Criteria",
                                         "Futility Criteria"),
@@ -323,7 +452,7 @@ Allo_order <- rbind(Allo_order,temp_df)
 
 ### First Interim Analysis  \
 ```{r First Interim Analysis}
-#The functions above should be run before executing the following codes
+#The functions above (Posterior function, Interim Analysis function, RAR Allocation function) should be run before executing the following codes
 ##Input the collected data
 #library(flextable)  
 library(rmarkdown)
@@ -336,8 +465,8 @@ Main_Data <- read_csv("S:/Biostats/BIO-STAT/BISR/FACTS Working Group/FACTS code/
 blinded_route<-unique(Main_Data$route_randomized_blinded)
 
 plaza_s1<-Main_Data$time_diff[Main_Data$route_true_blinded==blinded_route[1]] 
-rainbow_s1<-Main_Data$time_diff[Main_Data$route_true_blinded==blinded_route[2]]
-stateline_s1<-Main_Data$time_diff[Main_Data$route_true_blinded==blinded_route[3]]
+rainbow_s1<-Main_Data$time_diff[Main_Data$route_true_blinded==blinded_route[3]]
+stateline_s1<-Main_Data$time_diff[Main_Data$route_true_blinded==blinded_route[2]]
 
 set.seed(1234)  
 ###First interim
@@ -420,8 +549,8 @@ Main_Data_new <- read_csv("S:/Biostats/BIO-STAT/BISR/FACTS Working Group/FACTS c
 blinded_route<-unique(Main_Data_new$route_randomized_blinded)
 
 plaza_s1<-Main_Data_new$time_diff[Main_Data_new$route_true_blinded==blinded_route[1]] 
-rainbow_s1<-Main_Data_new$time_diff[Main_Data_new$route_true_blinded==blinded_route[2]]
-stateline_s1<-Main_Data_new$time_diff[Main_Data_new$route_true_blinded==blinded_route[3]]
+rainbow_s1<-Main_Data_new$time_diff[Main_Data_new$route_true_blinded==blinded_route[3]]
+stateline_s1<-Main_Data_new$time_diff[Main_Data_new$route_true_blinded==blinded_route[2]]
   
 ### Final Analysis (same as second interim)
   final<-interim_analysis(interim = 2,
